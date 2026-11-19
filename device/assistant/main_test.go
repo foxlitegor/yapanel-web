@@ -56,7 +56,7 @@ func TestChatRejectsEmptyAnswer(t *testing.T) {
 		io.WriteString(w, `{"choices":[{"message":{"content":"   \n"}}]}`)
 	}))
 	defer srv.Close()
-	_, err := chat(context.Background(), LLM{BaseURL: srv.URL, Model: "test"}, []message{{"user", "привет"}})
+	_, err := chat(context.Background(), LLM{BaseURL: srv.URL, Model: "test"}, []message{{"user", "привет"}}, chatOpts{})
 	if err == nil || !strings.Contains(err.Error(), "пустой") {
 		t.Fatalf("пустой ответ модели должен быть ошибкой: %v", err)
 	}

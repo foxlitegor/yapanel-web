@@ -2904,6 +2904,32 @@ echo @@BLUEZ
                      "mode": ("timeout_min", "follow_up")}
 
     ASSIST_ASSET = "assistantd-linux-arm64"
+    # как в device/assistant/config.go: alias сервера в LiteLLM и пределы таймаутов в секундах
+    MCP_ALIAS = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+    MCP_MAX_SERVERS = 20
+    ASSIST_TIMEOUTS = {"request_timeout": (10, 300, 90), "mcp_request_timeout": (10, 600, 180)}
+
+    @classmethod
+    def _assist_mcp_clean(cls, mcp):
+        """Только enabled и alias серверов: адреса и ключи MCP остаются в LiteLLM, require_approval всегда never."""
+        mcp = mcp if isinstance(mcp, dict) else {}
+        servers, seen = [], set()
+        for s in mcp.get("servers") if isinstance(mcp.get("servers"), list) else []:
+            name = str(s.get("name") if isinstance(s, dict) else "")
+            if not cls.MCP_ALIAS.fullmatch(name) or name in seen or len(servers) >= cls.MCP_MAX_SERVERS:
+                continue
+            seen.add(name)
+            servers.append({"name": name, "enabled": bool(s.get("enabled", True))})
+        return {"enabled": bool(mcp.get("enabled")), "servers": servers}
+
+    @classmethod
+    def _assist_timeout(cls, key, value):
+        lo, hi, default = cls.ASSIST_TIMEOUTS[key]
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return default
+        return n if not isinstance(value, bool) and lo <= n <= hi else default
 
     def _assist_binary(self, download=True):
         return self._device_binary(ASSIST_SRC, "assistantd", self.ASSIST_ASSET, "помощника", download)
@@ -3201,6 +3227,15 @@ echo @@BLUEZ
             cfg["keys"].pop(self._key_id(d["delete_key"]), None)
         if d.get("delete_connection"):
             self._assist_connection_delete(cfg, d["delete_connection"])
+        if "mcp" in d:
+            if isinstance(d["mcp"], dict) and len(d["mcp"].get("servers") or []) > self.MCP_MAX_SERVERS:
+                raise AdbError(f"MCP-серверов не больше {self.MCP_MAX_SERVERS}")
+            cfg["mcp"] = self._assist_mcp_clean(d["mcp"])
+        elif "mcp" in cfg:
+            cfg["mcp"] = self._assist_mcp_clean(cfg["mcp"])
+        for k in self.ASSIST_TIMEOUTS:
+            if k in d or k in cfg:
+                cfg[k] = self._assist_timeout(k, d.get(k, cfg.get(k)))
         mode = cfg.get("mode", {})
         if "timeout_min" in mode:
             mode["timeout_min"] = max(1, min(240, int(mode["timeout_min"])))

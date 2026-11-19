@@ -4,7 +4,7 @@ const html = fs.readFileSync(require('path').join(__dirname, '../static/index.ht
 const nodes = {}, groups = {};
 const get = id => nodes[id] ||= {value:'', checked:false, dataset:{}, options:{},
   focus(){},addEventListener(){},querySelector(s){return this.options[s] ||= {};}};
-const context = {AssistantRoute,asRouteRuntime:{},asMicPending:null,asMicNotice:'',asProtocolModels:new Map(),asModelList:{url:'',models:[]},esc:s=>String(s), $:get,$$:s=>groups[s] ||= [{},{}],asTtsView(){},asRouteRender(){},asFill(){},
+const context = {AssistantRoute,asRouteRuntime:{},asMicPending:null,asMicNotice:'',asMcp:[],asProtocolModels:new Map(),asModelList:{url:'',models:[]},esc:s=>String(s), $:get,$$:s=>groups[s] ||= [{},{}],asTtsView(){},asRouteRender(){},asFill(){},
   asTransportButtons(){},asDirty(){},asConnStore(){},asKeysView(){},asPane(){},asPaneName:'voice',
   act:async (_,fn)=>fn(),api:async (path,data)=>{context.saved={path,data};return {config:data};}};
 vm.createContext(context);
@@ -55,7 +55,8 @@ const values={'#as-transport':'realtime','#as-realtime-voice':'marin','#as-model
 for (const [id,value]of Object.entries(values)){assert(html.includes(`id="${id.slice(1)}"`),id);get(id).value=value;}
 async function save(){await get('#as-save').onclick({currentTarget:{}});return context.saved.data;}
 (async()=>{
- let d=await save();assert.equal(d.llm.transport,'realtime');assert.equal(d.llm.voice,'marin');assert(!('stt'in d));assert(!('tts'in d));assert(!('exit'in d.mode));
+ let d=await save();assert.deepEqual(d.mcp,{enabled:false,servers:[]});assert.equal(d.request_timeout,90);assert.equal(d.mcp_request_timeout,180);
+ assert.equal(d.llm.transport,'realtime');assert.equal(d.llm.voice,'marin');assert(!('stt'in d));assert(!('tts'in d));assert(!('exit'in d.mode));
  get('#as-transport').value='chat';get('#as-input').value='alice';get('#as-tts').value='alice';
  d=await save();assert(!('voice'in d.llm));assert(!('stt'in d));assert.deepEqual(d.microphone,{source:'alice'});assert.deepEqual(d.tts,{provider:'alice'});
  get('#as-input').value='microphone';get('#as-tts').value='openai';d=await save();
