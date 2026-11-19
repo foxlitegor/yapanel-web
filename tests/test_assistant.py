@@ -273,6 +273,14 @@ class AssistantMcpAndTimeouts(unittest.TestCase):
         self.assertNotIn("mcp", cfg)
         self.assertNotIn("request_timeout", cfg)
 
+    def test_stream_only_for_fish(self):
+        fish = {"provider": "openai", "base_url": "https://api.fish.audio/v1", "stream": True}
+        self.assertTrue(self.set({"tts": dict(fish)})["tts"]["stream"])
+        other = dict(fish, base_url="https://api.openai.com/v1")
+        self.assertFalse(self.set({"tts": other})["tts"]["stream"])
+        fake = dict(fish, base_url="https://evil.example/?x=api.fish.audio")
+        self.assertFalse(self.set({"tts": fake})["tts"]["stream"])
+
     def test_mcp_servers_cleaned(self):
         servers = [{"name": "deepwiki", "enabled": True, "require_approval": "always", "url": "http://x"},
                    {"name": "deepwiki", "enabled": False}, {"name": "bad name"}, {"name": ""}, "x",
