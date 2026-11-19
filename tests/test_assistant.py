@@ -256,3 +256,51 @@ class MicrophoneConfirmation(unittest.TestCase):
         self.assertTrue(state['microphone_installed'])
         self.assertEqual(p.assistant_status.call_count, 3)
         self.assertTrue(any('manage.sh confirm' in call.args[0] for call in p.adb.shell.call_args_list))
+
+
+class AssistantMcpAndTimeouts(unittest.TestCase):
+    """MCP-серверы живут в LiteLLM: панель хранит только alias и флаги, а таймауты нормализует к пределам."""
+
+    def setUp(self):
+        self.panel_ = AssistantKeys.panel(self, {})
+
+    def set(self, d):
+        self.panel_.assistant_set(d)
+        return self.panel_.stored
+
+    def test_old_config_untouched(self):
+        cfg = self.set({"enabled": True})
+        self.assertNotIn("mcp", cfg)
+        self.assertNotIn("request_timeout", cfg)
+
+    def test_mcp_servers_cleaned(self):
+        servers = [{"name": "deepwiki", "enabled": True, "require_approval": "always", "url": "http://x"},
+                   {"name": "deepwiki", "enabled": False}, {"name": "bad name"}, {"name": ""}, "x",
+                   {"name": "gh", "enabled": False}]
+        cfg = self.set({"mcp": {"enabled": True, "servers": servers}})
+        self.assertEqual(cfg["mcp"], {"enabled": True, "servers": [
+            {"name": "deepwiki", "enabled": True}, {"name": "gh", "enabled": False}]})
+
+    def test_mcp_limit(self):
+        servers = [{"name": f"s{i}", "enabled": True} for i in range(21)]
+        with self.assertRaises(server.AdbError):
+            self.set({"mcp": {"enabled": True, "servers": servers}})
+        cfg = self.set({"mcp": {"enabled": True, "servers": servers[:20]}})
+        self.assertEqual(len(cfg["mcp"]["servers"]), 20)
+
+    def test_mcp_garbage(self):
+        self.assertEqual(self.set({"mcp": "x"})["mcp"], {"enabled": False, "servers": []})
+
+    def test_timeouts_bounds(self):
+        for req, mcp, want in ((10, 10, (10, 10)), (300, 600, (300, 600)), (9, 9, (90, 180)),
+                               (301, 601, (90, 180)), ("abc", None, (90, 180)), (True, False, (90, 180)),
+                               ("45", "250", (45, 250))):
+            cfg = self.set({"request_timeout": req, "mcp_request_timeout": mcp})
+            self.assertEqual((cfg["request_timeout"], cfg["mcp_request_timeout"]), want, (req, mcp))
+
+    def test_timeouts_keep_stored_and_default(self):
+        self.panel_.stored = {"request_timeout": 120}
+        cfg = self.set({"enabled": True})
+        self.assertEqual(cfg["request_timeout"], 120)
+        self.panel_.stored = {"mcp_request_timeout": 5000}
+        self.assertEqual(self.set({"enabled": True})["mcp_request_timeout"], 180)

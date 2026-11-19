@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -73,6 +74,12 @@ type Config struct {
 	Skills     Skills            `json:"skills"`
 	Weather    Weather           `json:"weather"`
 	Keys       map[string]string `json:"keys"` // ключ на каждый адрес API: сменили провайдера — ключ прежнего остался
+	MCP        MCP               `json:"mcp"`
+
+	// Таймаут запроса к модели целиком, вместе с чтением ответа, в секундах: обычного и с MCP-инструментами
+	// (LiteLLM выполняет их сам, поэтому ответа ждать дольше).
+	RequestTimeout    int `json:"request_timeout"`
+	MCPRequestTimeout int `json:"mcp_request_timeout"`
 }
 
 // Mode — режим ассистента: после фразы включения все вопросы к «Алисе» уходят модели, без «спроси GPT».
@@ -100,8 +107,17 @@ func (c Config) keyFor(base, legacy string) string {
 const defaultPrompt = "Ты эрудированный собеседник и отвечаешь на любые вопросы. Отвечай по-русски и коротко: " +
 	"одно-три предложения разговорной речью. Ответ прочитают вслух, поэтому без списков, разметки, эмодзи, ссылок и формул."
 
+const (
+	defaultRequestTimeout    = 90
+	defaultMCPRequestTimeout = 180
+	maxMCPServers            = 20
+)
+
+var mcpAlias = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+
 func defaults() Config {
 	return Config{
+		RequestTimeout: defaultRequestTimeout, MCPRequestTimeout: defaultMCPRequestTimeout,
 		STT:        STT{Provider: "alice", Language: "ru"},
 		Microphone: Microphone{Source: "alice", Threshold: 300, Gain: 32, SilenceMS: 900},
 		Triggers:   []string{"спроси gpt", "спроси джипити", "спроси чат gpt", "спроси нейросеть"},
@@ -175,6 +191,13 @@ func parseConfig(b []byte) (Config, error) {
 	if c.TTS.Speed <= 0 {
 		c.TTS.Speed = 1
 	}
+	if c.RequestTimeout < 10 || c.RequestTimeout > 300 {
+		c.RequestTimeout = defaultRequestTimeout
+	}
+	if c.MCPRequestTimeout < 10 || c.MCPRequestTimeout > 600 {
+		c.MCPRequestTimeout = defaultMCPRequestTimeout
+	}
+	c.MCP = c.MCP.normalized()
 	if c.Weather.Lat < -90 || c.Weather.Lat > 90 || c.Weather.Lon < -180 || c.Weather.Lon > 180 {
 		c.Weather.Lat, c.Weather.Lon = 0, 0
 	}

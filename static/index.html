@@ -2838,6 +2838,16 @@
                 <div class="as-field"><label class="as-label" for="as-tokens">Длина ответа</label><input class="field" id="as-tokens" type="number" min="50" max="4000" step="50"></div>
                 <div class="as-field"><label class="as-label" for="as-history">Помнить реплик</label><input class="field" id="as-history" type="number" min="0" max="20"><p class="hint">Пар «вопрос — ответ». Через 10 минут тишины разговор начинается заново.</p></div>
                 <div class="as-field"><label class="as-label" for="as-proxy">Прокси</label><input class="field" id="as-proxy" placeholder="socks5://адрес:порт или http://адрес:порт"><p class="hint" id="as-proxy-hint">Для запросов к модели и озвучке; остальной трафик колонки не меняется.</p></div>
+                <div class="as-field"><label class="as-label" for="as-req-timeout">Таймаут запроса к модели, секунд</label><input class="field" id="as-req-timeout" type="number" min="10" max="300" step="5"><p class="hint">От 10 до 300, по умолчанию 90. Ограничивает запрос целиком, вместе с получением ответа.</p></div>
+              </details>
+              <details class="as-more" id="as-mcp-block"><summary>MCP-инструменты через LiteLLM</summary>
+                <div class="as-field"><label class="as-head-switch"><span>Передавать MCP-инструменты модели</span><input type="checkbox" class="switch" id="as-mcp-enabled"></label>
+                  <p class="hint">Только для режима «Chat Completions» с LiteLLM. Серверы подключены и настроены в LiteLLM, а LiteLLM сам вызывает инструменты и возвращает готовый ответ. Здесь указываются только их alias. В поле «Ключ API» нужен Virtual Key с доступом только к этим MCP-серверам, не Master Key.</p></div>
+                <div class="as-field"><span class="as-label">Серверы (не больше 20)</span>
+                  <div id="as-mcp-list"></div>
+                  <div class="as-inline"><input class="field" id="as-mcp-name" placeholder="alias в LiteLLM, например deepwiki" maxlength="64" aria-label="Alias MCP-сервера"><button type="button" class="btn sm" id="as-mcp-add">Добавить</button></div>
+                  <p class="hint" id="as-mcp-err" hidden></p></div>
+                <div class="as-field"><label class="as-label" for="as-mcp-timeout">Таймаут запроса с MCP, секунд</label><input class="field" id="as-mcp-timeout" type="number" min="10" max="600" step="10"><p class="hint">От 10 до 600, по умолчанию 180. Используется, когда включён MCP и есть хотя бы один включённый сервер.</p></div>
               </details>
               <p class="hint as-http" hidden></p>
             </div>
@@ -7344,6 +7354,11 @@ function asFill(c) {
   $('#as-tokens').value = llm.max_tokens || 500;
   $('#as-history').value = llm.history ?? 6;
   $('#as-proxy').value = llm.proxy || '';
+  $('#as-req-timeout').value = c.request_timeout || 90;
+  $('#as-mcp-timeout').value = c.mcp_request_timeout || 180;
+  $('#as-mcp-enabled').checked = !!c.mcp?.enabled;
+  asMcp = (c.mcp?.servers || []).map(x => ({ name: x.name, enabled: x.enabled !== false }));
+  asMcpRender();
   $('#as-tts').value = tts.provider || 'alice';
   $$('input[name="as-tts-src"]').forEach(r => r.checked = r.value === (tts.provider || 'alice'));
   $('#as-tts-url').value = tts.base_url || '';
@@ -7454,7 +7469,7 @@ $('#as-route-flow').addEventListener('keydown', event => {
 });
 
 // ---------- сохранённые провайдеры ----------
-let asConns = {}, asActiveConn = '', asSavedSig = '', asFilledOnce = false;
+let asMcp = [], asConns = {}, asActiveConn = '', asSavedSig = '', asFilledOnce = false;
 function asTransportButtons() {
   const v = $('#as-transport').value;
   $$('#as-transport-btns button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.transport === v)));
@@ -7617,13 +7632,41 @@ function asPhrasesRender() {
   input.addEventListener('blur', () => { if (!input.value.trim()) input.hidden = true; });
 });
 
+// ---------- MCP-серверы (alias в LiteLLM) ----------
+function asMcpRender() {
+  $('#as-mcp-list').innerHTML = asMcp.map((x, i) => `<div class="as-inline"><label class="as-head-switch" style="flex:1"><span>${esc(x.name)}</span>`
+    + `<input type="checkbox" class="switch" data-mcp-on="${i}" ${x.enabled ? 'checked' : ''}></label>`
+    + `<button type="button" class="btn sm" data-mcp-del="${i}" aria-label="Убрать ${esc(x.name)}">Убрать</button></div>`).join('')
+    || '<p class="hint">Серверов нет.</p>';
+}
+$('#as-mcp-list').addEventListener('change', e => {
+  const i = e.target.dataset.mcpOn;
+  if (i !== undefined) { asMcp[i].enabled = e.target.checked; asDirty(); }
+});
+$('#as-mcp-list').addEventListener('click', e => {
+  const i = e.target.dataset.mcpDel;
+  if (i !== undefined) { asMcp.splice(Number(i), 1); asMcpRender(); asDirty(); }
+});
+$('#as-mcp-add').onclick = () => {
+  const name = $('#as-mcp-name').value.trim(), err = $('#as-mcp-err');
+  const bad = !/^[A-Za-z0-9_.-]{1,64}$/.test(name) ? 'Alias: латиница, цифры, «_», «.», «-», до 64 символов'
+    : asMcp.some(x => x.name === name) ? 'Такой сервер уже есть' : asMcp.length >= 20 ? 'Не больше 20 серверов' : '';
+  err.hidden = !bad; err.textContent = bad;
+  if (bad) return;
+  asMcp.push({ name, enabled: true });
+  $('#as-mcp-name').value = '';
+  asMcpRender(); asDirty();
+};
+$('#as-mcp-name').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); $('#as-mcp-add').click(); } });
+
 // ---------- изменения и сохранение ----------
 function asFormSig() {
   const key = id => $(id).value ? id + ':' + $(id).value : '';
   return JSON.stringify([$('#as-input').value, $('#as-triggers').value, $('#as-mode-enter').value, $('#as-mode-exit').value,
     $('#as-mode-timeout').value, $('#as-mode-follow').checked, $('#as-url').value.trim(), $('#as-model').value.trim(),
     $('#as-transport').value, $('#as-realtime-voice').value, $('#as-prompt').value, $('#as-tokens').value, $('#as-history').value,
-    $('#as-proxy').value.trim(), $('#as-mic-gain').value, $('#as-mic-threshold').value, $('#as-mic-silence').value,
+    $('#as-proxy').value.trim(), $('#as-req-timeout').value, $('#as-mcp-timeout').value, $('#as-mcp-enabled').checked, asMcp,
+    $('#as-mic-gain').value, $('#as-mic-threshold').value, $('#as-mic-silence').value,
     $('#as-stt').value, $('#as-stt-url').value, $('#as-stt-proxy').value, $('#as-stt-model').value, $('#as-stt-language').value,
     $('#as-tts').value, $('#as-tts-url').value, $('#as-tts-model').value, $('#as-tts-voice').value, $('#as-tts-speed').value,
     $('#as-skill-time').checked, $('#as-skill-weather').checked, $('#as-weather-city').value.trim(),
@@ -7950,6 +7993,9 @@ $('#as-save').onclick = e => act(e.currentTarget, async () => {
     llm: { transport: $('#as-transport').value, voice: $('#as-realtime-voice').value.trim(), base_url: $('#as-url').value.trim(), api_key: $('#as-key').value, model: $('#as-model').value.trim(),
       system_prompt: $('#as-prompt').value.trim(), max_tokens: num('#as-tokens', 500), history: Math.max(0, Number($('#as-history').value) || 0),
       proxy: $('#as-proxy').value.trim() },
+    request_timeout: Math.max(10, Math.min(300, num('#as-req-timeout', 90))),
+    mcp_request_timeout: Math.max(10, Math.min(600, num('#as-mcp-timeout', 180))),
+    mcp: { enabled: $('#as-mcp-enabled').checked, servers: asMcp },
     microphone: { source: $('#as-input').value, gain: num('#as-mic-gain', 32), threshold: num('#as-mic-threshold', 300), silence_ms: num('#as-mic-silence', 900) },
     stt: { proxy: $('#as-stt-proxy').value.trim(), provider: $('#as-stt').value, base_url: $('#as-stt-url').value.trim(), api_key: $('#as-stt-key').value, model: $('#as-stt-model').value.trim(), language: $('#as-stt-language').value.trim() },
     tts: { provider: $('#as-tts').value, base_url: $('#as-tts-url').value.trim(), api_key: $('#as-tts-key').value,

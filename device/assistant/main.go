@@ -313,7 +313,7 @@ func (d *Daemon) startTurn(question, source string, pcm []byte) {
 			d.mu.Unlock()
 		} else if err == nil && !local {
 			modelStart := time.Now()
-			answer, err = chat(ctx, c.LLM, msgs)
+			answer, err = chat(ctx, c.LLM, msgs, c.chatOpts())
 			e.ModelMs = time.Since(modelStart).Milliseconds()
 			if err == nil {
 				d.setContext(ctx, "speaking", "")

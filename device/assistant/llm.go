@@ -99,16 +99,24 @@ func post(ctx context.Context, hc *http.Client, base, path, key string, payload 
 }
 
 // chat — OpenAI-совместимый /chat/completions: его понимают почти все провайдеры и локальные серверы.
-func chat(ctx context.Context, c LLM, messages []message) (string, error) {
+// Если в запросе есть MCP-инструменты, LiteLLM сам их вызывает и возвращает готовый ответ: этот код ничего
+// не выполняет и не повторяет запросы.
+func chat(ctx context.Context, c LLM, messages []message, o chatOpts) (string, error) {
 	if c.Model == "" {
 		return "", errors.New("не задана модель")
 	}
-	hc, err := client(c.Proxy, 90*time.Second)
+	// Таймаут на контексте охватывает весь запрос вместе с чтением тела ответа и отменяет его.
+	ctx, cancel := context.WithTimeout(ctx, o.timeout())
+	defer cancel()
+	hc, err := client(c.Proxy, 0)
 	if err != nil {
 		return "", err
 	}
-	data, _, err := post(ctx, hc, c.BaseURL, "/chat/completions", c.APIKey,
-		map[string]any{"model": c.Model, "messages": messages, "max_tokens": c.MaxTokens, "stream": false}, 1<<20)
+	payload := map[string]any{"model": c.Model, "messages": messages, "max_tokens": c.MaxTokens, "stream": false}
+	if len(o.Tools) > 0 {
+		payload["tools"] = o.Tools
+	}
+	data, _, err := post(ctx, hc, c.BaseURL, "/chat/completions", c.APIKey, payload, 1<<20)
 	if err != nil {
 		return "", err
 	}
